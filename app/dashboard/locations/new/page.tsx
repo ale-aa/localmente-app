@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { DashboardHeader } from "@/components/dashboard/header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,21 +10,24 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { createLocation, searchPlaces, getPlaceDetails } from "@/app/actions/locations";
+import { createLocation } from "@/app/actions/locations";
+import { getClients, type ClientWithLocations } from "@/app/actions/clients";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, MapPin, Search } from "lucide-react";
+import { Loader2, UserPlus, ExternalLink } from "lucide-react";
+import { AddressAutocomplete } from "@/components/address-autocomplete";
 
 export default function NewLocationPage() {
   const router = useRouter();
   const { toast } = useToast();
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isSearching, setIsSearching] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [searchResults, setSearchResults] = useState<any[]>([]);
-  const [showNewClientForm, setShowNewClientForm] = useState(true);
+  const [isLoadingClients, setIsLoadingClients] = useState(true);
+  const [clients, setClients] = useState<ClientWithLocations[]>([]);
 
   // Form state (SEO-focused)
   const [formData, setFormData] = useState({
+    // Cliente (OBBLIGATORIO)
+    clientId: "",
+
     // NAP Data (Source of Truth)
     businessName: "",
     phone: "",
@@ -45,88 +49,87 @@ export default function NewLocationPage() {
     category: "",
     description: "",
     placeId: "",
-
-    // Cliente
-    newClient: true,
-    client: {
-      firstName: "",
-      lastName: "",
-      email: "",
-      phone: "",
-      clientType: "individual" as "individual" | "company",
-    },
   });
 
-  const handleSearchAddress = async () => {
-    if (searchQuery.length < 3) return;
-
-    setIsSearching(true);
-    try {
-      const results = await searchPlaces(searchQuery);
-      setSearchResults(results.predictions || []);
-    } catch (error) {
-      toast({
-        title: "Errore",
-        description: "Errore durante la ricerca dell'indirizzo",
-        variant: "destructive",
-      });
-    } finally {
-      setIsSearching(false);
-    }
-  };
-
-  const handleSelectPlace = async (placeId: string) => {
-    try {
-      const details = await getPlaceDetails(placeId);
-      if (details?.result) {
-        const result = details.result;
-
-        // Estrai i componenti dell'indirizzo
-        const addressComponents = result.address_components || [];
-        const streetNumber = addressComponents.find((c: any) => c.types.includes("street_number"))?.long_name || "";
-        const route = addressComponents.find((c: any) => c.types.includes("route"))?.long_name || "";
-        const city = addressComponents.find((c: any) => c.types.includes("locality"))?.long_name || "";
-        const province = addressComponents.find((c: any) => c.types.includes("administrative_area_level_2"))?.short_name || "";
-        const postalCode = addressComponents.find((c: any) => c.types.includes("postal_code"))?.long_name || "";
-
-        setFormData(prev => ({
-          ...prev,
-          businessName: result.name || prev.businessName,
-          address: route,
-          streetNumber,
-          city,
-          province,
-          postalCode,
-          latitude: result.geometry?.location?.lat,
-          longitude: result.geometry?.location?.lng,
-          placeId: result.place_id || "",
-          phone: result.formatted_phone_number || prev.phone,
-          website: result.website || prev.website,
-        }));
-
-        setSearchResults([]);
-        setSearchQuery("");
-
+  // Carica i clienti all'avvio
+  useEffect(() => {
+    const loadClients = async () => {
+      setIsLoadingClients(true);
+      try {
+        const result = await getClients();
+        if (result.error) {
+          toast({
+            title: "Errore",
+            description: "Impossibile caricare la lista clienti",
+            variant: "destructive",
+          });
+        } else {
+          setClients(result.clients || []);
+        }
+      } catch (error) {
         toast({
-          title: "Indirizzo selezionato",
-          description: "I dati dell'indirizzo sono stati compilati automaticamente",
+          title: "Errore",
+          description: "Impossibile caricare la lista clienti",
+          variant: "destructive",
         });
+      } finally {
+        setIsLoadingClients(false);
       }
-    } catch (error) {
-      toast({
-        title: "Errore",
-        description: "Errore durante il recupero dei dettagli dell'indirizzo",
-        variant: "destructive",
-      });
-    }
+    };
+
+    loadClients();
+  }, [toast]);
+
+  const handleAddressSelect = (details: {
+    businessName?: string;
+    address: string;
+    streetNumber: string;
+    city: string;
+    province: string;
+    postalCode: string;
+    country: string;
+    latitude: number;
+    longitude: number;
+    placeId: string;
+    phone?: string;
+    website?: string;
+  }) => {
+    setFormData(prev => ({
+      ...prev,
+      businessName: details.businessName || prev.businessName,
+      address: details.address,
+      streetNumber: details.streetNumber,
+      city: details.city,
+      province: details.province,
+      postalCode: details.postalCode,
+      latitude: details.latitude,
+      longitude: details.longitude,
+      placeId: details.placeId,
+      phone: details.phone || prev.phone,
+      website: details.website || prev.website,
+    }));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Validazione cliente
+    if (!formData.clientId) {
+      toast({
+        title: "Cliente obbligatorio",
+        description: "Seleziona un cliente per associare questa sede",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setIsSubmitting(true);
 
     try {
-      const result = await createLocation(formData);
+      const result = await createLocation({
+        ...formData,
+        newClient: false,
+      });
 
       if (result.error) {
         toast({
@@ -157,144 +160,114 @@ export default function NewLocationPage() {
   return (
     <div className="flex flex-col">
       <DashboardHeader
-        title="Aggiungi Nuova Location"
+        title="Aggiungi Nuova Sede"
         description="Crea una nuova sede SEO per il tuo cliente"
       />
 
       <div className="flex-1 p-6">
         <form onSubmit={handleSubmit} className="mx-auto max-w-4xl space-y-6">
-          {/* Sezione Cliente */}
+          {/* Sezione Selezione Cliente */}
           <Card>
             <CardHeader>
-              <CardTitle>Informazioni Cliente</CardTitle>
+              <CardTitle>Assegna al Cliente *</CardTitle>
               <CardDescription>
-                Inserisci i dettagli del proprietario o cliente
+                Seleziona il cliente proprietario di questa sede
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor="firstName">Nome *</Label>
-                  <Input
-                    id="firstName"
-                    required
-                    value={formData.client.firstName}
-                    onChange={(e) =>
-                      setFormData(prev => ({
-                        ...prev,
-                        client: { ...prev.client, firstName: e.target.value },
-                      }))
-                    }
-                  />
+              {isLoadingClients ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                  <span className="ml-2 text-sm text-muted-foreground">
+                    Caricamento clienti...
+                  </span>
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="lastName">Cognome *</Label>
-                  <Input
-                    id="lastName"
-                    required
-                    value={formData.client.lastName}
-                    onChange={(e) =>
-                      setFormData(prev => ({
-                        ...prev,
-                        client: { ...prev.client, lastName: e.target.value },
-                      }))
-                    }
-                  />
+              ) : clients.length === 0 ? (
+                <div className="rounded-lg border border-dashed p-8 text-center">
+                  <UserPlus className="mx-auto mb-4 h-12 w-12 text-muted-foreground" />
+                  <h3 className="mb-2 text-lg font-semibold">
+                    Nessun cliente disponibile
+                  </h3>
+                  <p className="mb-4 text-sm text-muted-foreground">
+                    Devi prima creare un cliente prima di aggiungere una sede
+                  </p>
+                  <Link href="/dashboard/clients">
+                    <Button type="button">
+                      <UserPlus className="mr-2 h-4 w-4" />
+                      Vai a Gestione Clienti
+                    </Button>
+                  </Link>
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="clientEmail">Email</Label>
-                  <Input
-                    id="clientEmail"
-                    type="email"
-                    value={formData.client.email}
-                    onChange={(e) =>
-                      setFormData(prev => ({
-                        ...prev,
-                        client: { ...prev.client, email: e.target.value },
-                      }))
-                    }
-                  />
+              ) : (
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="clientId">Cliente *</Label>
+                    <Select
+                      value={formData.clientId}
+                      onValueChange={(value) =>
+                        setFormData(prev => ({ ...prev, clientId: value }))
+                      }
+                      required
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Seleziona un cliente" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {clients.map((client) => (
+                          <SelectItem key={client.id} value={client.id}>
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium">
+                                {client.first_name} {client.last_name}
+                              </span>
+                              {client.city && (
+                                <span className="text-xs text-muted-foreground">
+                                  • {client.city}
+                                </span>
+                              )}
+                              <span className="text-xs text-muted-foreground">
+                                ({client.locations_count}{" "}
+                                {client.locations_count === 1 ? "sede" : "sedi"})
+                              </span>
+                            </div>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="rounded-lg bg-muted/50 p-4">
+                    <p className="text-sm text-muted-foreground">
+                      Non trovi il cliente?{" "}
+                      <Link
+                        href="/dashboard/clients"
+                        className="font-medium text-primary hover:underline inline-flex items-center gap-1"
+                      >
+                        Crea un nuovo cliente
+                        <ExternalLink className="h-3 w-3" />
+                      </Link>
+                    </p>
+                  </div>
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="clientPhone">Telefono</Label>
-                  <Input
-                    id="clientPhone"
-                    type="tel"
-                    value={formData.client.phone}
-                    onChange={(e) =>
-                      setFormData(prev => ({
-                        ...prev,
-                        client: { ...prev.client, phone: e.target.value },
-                      }))
-                    }
-                  />
-                </div>
-              </div>
+              )}
             </CardContent>
           </Card>
 
-          {/* Sezione Ricerca Indirizzo */}
+          {/* Sezione Ricerca Indirizzo con Google Places */}
           <Card>
             <CardHeader>
               <CardTitle>Cerca Indirizzo</CardTitle>
               <CardDescription>
-                Usa Google Places per trovare l'indirizzo esatto
+                Usa Google Places per trovare l'indirizzo esatto e compilare automaticamente i campi
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex gap-2">
-                <div className="relative flex-1">
-                  <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    placeholder="Cerca un indirizzo..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        handleSearchAddress();
-                      }
-                    }}
-                    className="pl-9"
-                  />
-                </div>
-                <Button
-                  type="button"
-                  onClick={handleSearchAddress}
-                  disabled={isSearching || searchQuery.length < 3}
-                >
-                  {isSearching ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    "Cerca"
-                  )}
-                </Button>
-              </div>
-
-              {searchResults.length > 0 && (
-                <div className="space-y-2">
-                  {searchResults.map((result) => (
-                    <button
-                      key={result.place_id}
-                      type="button"
-                      onClick={() => handleSelectPlace(result.place_id)}
-                      className="w-full rounded-lg border p-3 text-left hover:bg-accent"
-                    >
-                      <div className="flex items-start gap-2">
-                        <MapPin className="mt-0.5 h-4 w-4 text-muted-foreground" />
-                        <div>
-                          <div className="font-medium">
-                            {result.structured_formatting.main_text}
-                          </div>
-                          <div className="text-sm text-muted-foreground">
-                            {result.structured_formatting.secondary_text}
-                          </div>
-                        </div>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              )}
+            <CardContent>
+              <AddressAutocomplete
+                onAddressSelect={handleAddressSelect}
+                placeholder="Cerca un indirizzo (es: Pizzeria Da Mario, Milano)..."
+              />
+              <p className="mt-2 text-xs text-muted-foreground">
+                Inizia a digitare per vedere i suggerimenti reali da Google Places
+              </p>
             </CardContent>
           </Card>
 
@@ -381,6 +354,15 @@ export default function NewLocationPage() {
                 </div>
               </div>
 
+              {/* Coordinate (hidden ma presenti) */}
+              {formData.latitude && formData.longitude && (
+                <div className="rounded-lg bg-green-50 dark:bg-green-950/20 p-3 border border-green-200 dark:border-green-800">
+                  <p className="text-sm text-green-800 dark:text-green-200">
+                    ✓ Coordinate GPS acquisite: {formData.latitude.toFixed(6)}, {formData.longitude.toFixed(6)}
+                  </p>
+                </div>
+              )}
+
               {/* Phone, Email, Website */}
               <div className="grid gap-4 md:grid-cols-3">
                 <div className="space-y-2">
@@ -438,7 +420,10 @@ export default function NewLocationPage() {
             >
               Annulla
             </Button>
-            <Button type="submit" disabled={isSubmitting}>
+            <Button
+              type="submit"
+              disabled={isSubmitting || !formData.clientId || clients.length === 0}
+            >
               {isSubmitting ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />

@@ -72,9 +72,9 @@ export async function GET(request: NextRequest) {
       prompt: "consent",
       // Scopes richiesti
       scope: [
-        "https://www.googleapis.com/auth/business.manage", // Google Business Profile
         "https://www.googleapis.com/auth/userinfo.email", // Email dell'utente
         "https://www.googleapis.com/auth/userinfo.profile", // Profilo dell'utente
+        "https://www.googleapis.com/auth/business.manage", // Google Business Profile - Account Management
       ],
       // State parameter (opzionale ma raccomandato per sicurezza)
       state: Buffer.from(

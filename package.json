@@ -10,6 +10,7 @@
     "migrate": "node scripts/migrate.mjs"
   },
   "dependencies": {
+    "@googlemaps/js-api-loader": "^2.0.2",
     "@hookform/resolvers": "^5.2.2",
     "@radix-ui/react-alert-dialog": "^1.1.15",
     "@radix-ui/react-avatar": "^1.1.11",
@@ -31,6 +32,7 @@
     "leaflet": "^1.9.4",
     "lucide-react": "^0.468.0",
     "next": "^15.1.6",
+    "openai": "^6.17.0",
     "pg": "^8.18.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
@@ -39,6 +41,7 @@
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.4.0",
     "tailwindcss-animate": "^1.0.7",
+    "use-places-autocomplete": "^4.0.1",
     "zod": "^4.3.6"
   },
   "devDependencies": {

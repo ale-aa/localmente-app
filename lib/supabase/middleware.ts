@@ -38,12 +38,12 @@ export async function updateSession(request: NextRequest) {
   // Proteggi le route /dashboard/* - richiedi autenticazione
   if (request.nextUrl.pathname.startsWith('/dashboard') && !user) {
     const url = request.nextUrl.clone()
-    url.pathname = '/login'
+    url.pathname = '/auth/login'
     return NextResponse.redirect(url)
   }
 
-  // Se l'utente è autenticato e prova ad accedere a /login, redirect alla dashboard
-  if (request.nextUrl.pathname.startsWith('/login') && user) {
+  // Se l'utente è autenticato e prova ad accedere a /auth/login, redirect alla dashboard
+  if (request.nextUrl.pathname.startsWith('/auth/login') && user) {
     const url = request.nextUrl.clone()
     url.pathname = '/dashboard'
     return NextResponse.redirect(url)

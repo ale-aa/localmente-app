@@ -10,8 +10,9 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
 import { startScan, getScansForLocation, getScanResults } from "@/app/actions/rank-tracker";
+import { generateLocalKeywords } from "@/app/actions/ai-suggestions";
 import { getRecommendedRadius } from "@/lib/geo-utils";
-import { Loader2, TrendingUp, Target, MapPin, Calendar } from "lucide-react";
+import { Loader2, TrendingUp, Target, MapPin, Calendar, Sparkles } from "lucide-react";
 import { ScanResultsView } from "./scan-results-view";
 
 interface RankTrackerTabProps {
@@ -26,6 +27,8 @@ export function RankTrackerTab({ locationId, location }: RankTrackerTabProps) {
   const [selectedScan, setSelectedScan] = useState<any>(null);
   const [scanResults, setScanResults] = useState<any[]>([]);
   const [isLoadingResults, setIsLoadingResults] = useState(false);
+  const [aiSuggestions, setAiSuggestions] = useState<string[]>([]);
+  const [isLoadingAi, setIsLoadingAi] = useState(false);
 
   const [formData, setFormData] = useState({
     keyword: "",
@@ -42,6 +45,52 @@ export function RankTrackerTab({ locationId, location }: RankTrackerTabProps) {
   const loadScans = async () => {
     const { scans: loadedScans } = await getScansForLocation(locationId);
     setScans(loadedScans);
+  };
+
+  const handleAiSuggestions = async () => {
+    setIsLoadingAi(true);
+    setAiSuggestions([]);
+
+    try {
+      const result = await generateLocalKeywords({
+        businessName: location.business_name,
+        city: location.city,
+        category: location.category,
+      });
+
+      if (result.error) {
+        toast({
+          title: "Errore AI",
+          description: result.error,
+          variant: "destructive",
+        });
+        return;
+      }
+
+      if (result.keywords && result.keywords.length > 0) {
+        setAiSuggestions(result.keywords);
+        toast({
+          title: "Suggerimenti generati",
+          description: `${result.keywords.length} keyword pronte per te`,
+        });
+      }
+    } catch (error: any) {
+      toast({
+        title: "Errore",
+        description: error.message || "Errore durante la generazione dei suggerimenti",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoadingAi(false);
+    }
+  };
+
+  const handleSelectKeyword = (keyword: string) => {
+    setFormData({ ...formData, keyword });
+    toast({
+      title: "Keyword selezionata",
+      description: `"${keyword}" è stata inserita nel campo`,
+    });
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -138,7 +187,29 @@ export function RankTrackerTab({ locationId, location }: RankTrackerTabProps) {
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="keyword">Keyword *</Label>
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="keyword">Keyword *</Label>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleAiSuggestions}
+                    disabled={isLoadingAi}
+                    className="h-8 gap-1 text-xs"
+                  >
+                    {isLoadingAi ? (
+                      <>
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                        Analisi in corso...
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="h-3 w-3" />
+                        Suggerisci Keyword
+                      </>
+                    )}
+                  </Button>
+                </div>
                 <Input
                   id="keyword"
                   placeholder="es: agenzia immobiliare roma"
@@ -146,6 +217,25 @@ export function RankTrackerTab({ locationId, location }: RankTrackerTabProps) {
                   onChange={(e) => setFormData({ ...formData, keyword: e.target.value })}
                   required
                 />
+                {aiSuggestions.length > 0 && (
+                  <div className="space-y-2 pt-2">
+                    <p className="text-xs text-muted-foreground">
+                      Suggerimenti AI - Clicca per usare:
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {aiSuggestions.map((keyword, index) => (
+                        <Badge
+                          key={index}
+                          variant="secondary"
+                          className="cursor-pointer hover:bg-primary hover:text-primary-foreground transition-colors"
+                          onClick={() => handleSelectKeyword(keyword)}
+                        >
+                          {keyword}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="space-y-4">

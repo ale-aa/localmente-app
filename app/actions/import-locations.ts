@@ -13,6 +13,44 @@ export interface ImportResult {
 }
 
 /**
+ * Rate Limiting Helper: Pausa l'esecuzione per evitare di superare i limiti API
+ */
+async function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Retry Helper: Esegue una chiamata API con gestione automatica degli errori 429
+ */
+async function apiCallWithRetry<T>(
+  apiCall: () => Promise<T>,
+  retryDelayMs: number = 5000
+): Promise<T> {
+  try {
+    return await apiCall();
+  } catch (error: any) {
+    // Gestione specifica per errore 429 (Too Many Requests)
+    if (error.code === 429 || error.status === 429) {
+      console.warn(
+        `⚠️  [Rate Limit] Received 429 error. Waiting ${retryDelayMs / 1000}s before retry...`
+      );
+      await delay(retryDelayMs);
+
+      // Retry una volta sola
+      try {
+        return await apiCall();
+      } catch (retryError: any) {
+        console.error("❌ [Rate Limit] Retry failed:", retryError.message);
+        throw retryError;
+      }
+    }
+
+    // Se non è un 429, rilancia l'errore originale
+    throw error;
+  }
+}
+
+/**
  * Importa le locations da Google Business Profile
  * Crea automaticamente i clienti se non esistono
  */
@@ -79,9 +117,14 @@ export async function importLocationsFromGoogle(): Promise<{
 
     // STEP 1: Recupera tutti gli account
     console.log("📊 [Import] Fetching Google Business accounts...");
-    const accountsResponse = await mybusinessaccountmanagement.accounts.list();
+    const accountsResponse = await apiCallWithRetry(() =>
+      mybusinessaccountmanagement.accounts.list()
+    );
 
     const accounts = accountsResponse.data.accounts || [];
+
+    // Rate limiting: pausa dopo la chiamata API
+    await delay(2000);
 
     if (accounts.length === 0) {
       return {
@@ -104,14 +147,19 @@ export async function importLocationsFromGoogle(): Promise<{
       console.log(`📍 [Import] Fetching locations for account: ${account.name}`);
 
       try {
-        // Recupera le locations per questo account
-        const locationsResponse =
-          await mybusinessbusinessinformation.accounts.locations.list({
+        // Recupera le locations per questo account con rate limiting
+        const locationsResponse = await apiCallWithRetry(() =>
+          mybusinessbusinessinformation.accounts.locations.list({
             parent: account.name,
+            pageSize: 10, // Ridotto da default (100) per alleggerire il carico
             readMask: "name,title,storefrontAddress,phoneNumbers,latlng,websiteUri,regularHours,categories,storeCode",
-          });
+          })
+        );
 
         const locations = locationsResponse.data.locations || [];
+
+        // Rate limiting: pausa dopo la chiamata API
+        await delay(2000);
 
         console.log(
           `📍 [Import] Found ${locations.length} location(s) in account ${account.name}`
@@ -138,6 +186,9 @@ export async function importLocationsFromGoogle(): Promise<{
             } else {
               totalImported++;
             }
+
+            // Rate limiting: piccola pausa tra location per distribuire il carico
+            await delay(500);
           } catch (error: any) {
             console.error(
               `[Import] Error importing location ${location.title}:`,
@@ -158,6 +209,9 @@ export async function importLocationsFromGoogle(): Promise<{
           `Account ${account.accountName}: ${error.message || "Errore sconosciuto"}`
         );
       }
+
+      // Rate limiting: pausa tra account per rispettare i limiti API
+      await delay(2000);
     }
 
     console.log("✅ [Import] Import completed:", {
