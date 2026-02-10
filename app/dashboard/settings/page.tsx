@@ -1,5 +1,6 @@
 import { Metadata } from "next";
 import { GoogleIntegrationCard } from "@/components/settings/google-integration-card";
+import { BingIntegrationCard } from "@/components/settings/bing-integration-card";
 
 export const metadata: Metadata = {
   title: "Impostazioni | Localmente",
@@ -26,6 +27,7 @@ export default function SettingsPage() {
           <h2 className="text-xl font-semibold mb-4">Integrazioni</h2>
           <div className="grid gap-4">
             <GoogleIntegrationCard />
+            <BingIntegrationCard />
           </div>
         </div>
 

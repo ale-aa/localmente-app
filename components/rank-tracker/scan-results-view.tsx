@@ -1,9 +1,13 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatCoordinates, getRankColor } from "@/lib/geo-utils";
-import { TrendingUp, MapPin, Calendar, Target } from "lucide-react";
+import { TrendingUp, MapPin, Calendar, Target, FileDown, Loader2 } from "lucide-react";
 import { GeoGridMap } from "./geo-grid-map";
+import { generateRankPDF } from "@/app/actions/generate-rank-pdf";
+import { useToast } from "@/hooks/use-toast";
+import { useState } from "react";
 
 interface ScanResultsViewProps {
   scan: any;
@@ -16,6 +20,58 @@ interface ScanResultsViewProps {
 }
 
 export function ScanResultsView({ scan, results, isLoading, center }: ScanResultsViewProps) {
+  const { toast } = useToast();
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+
+  const handleDownloadPdf = async () => {
+    setIsGeneratingPdf(true);
+
+    try {
+      const result = await generateRankPDF({ scanId: scan.id });
+
+      if (result.error) {
+        toast({
+          title: "Errore",
+          description: result.error,
+          variant: "destructive",
+        });
+        return;
+      }
+
+      // Converti il base64 in blob e scarica
+      const byteCharacters = atob(result.pdf!);
+      const byteNumbers = new Array(byteCharacters.length);
+      for (let i = 0; i < byteCharacters.length; i++) {
+        byteNumbers[i] = byteCharacters.charCodeAt(i);
+      }
+      const byteArray = new Uint8Array(byteNumbers);
+      const blob = new Blob([byteArray], { type: "application/pdf" });
+
+      // Crea un link temporaneo e scarica
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = result.filename!;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+
+      toast({
+        title: "PDF Generato",
+        description: "Il report è stato scaricato con successo",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Errore",
+        description: error.message || "Errore durante la generazione del PDF",
+        variant: "destructive",
+      });
+    } finally {
+      setIsGeneratingPdf(false);
+    }
+  };
+
   if (isLoading) {
     return (
       <Card>
@@ -45,7 +101,7 @@ export function ScanResultsView({ scan, results, isLoading, center }: ScanResult
     <Card>
       <CardHeader>
         <div className="flex items-start justify-between">
-          <div>
+          <div className="flex-1">
             <CardTitle>{scan.keyword}</CardTitle>
             <CardDescription className="mt-2">
               <div className="flex items-center gap-2 text-sm">
@@ -58,9 +114,31 @@ export function ScanResultsView({ scan, results, isLoading, center }: ScanResult
               </div>
             </CardDescription>
           </div>
-          <Badge variant={scan.status === "completed" ? "default" : "secondary"}>
-            {scan.status === "completed" ? "Completata" : scan.status}
-          </Badge>
+          <div className="flex items-center gap-2">
+            <Badge variant={scan.status === "completed" ? "default" : "secondary"}>
+              {scan.status === "completed" ? "Completata" : scan.status}
+            </Badge>
+            {scan.status === "completed" && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleDownloadPdf}
+                disabled={isGeneratingPdf}
+              >
+                {isGeneratingPdf ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Generazione...
+                  </>
+                ) : (
+                  <>
+                    <FileDown className="mr-2 h-4 w-4" />
+                    Scarica Report PDF
+                  </>
+                )}
+              </Button>
+            )}
+          </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-6">

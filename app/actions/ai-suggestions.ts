@@ -2,10 +2,6 @@
 
 import OpenAI from "openai";
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
-
 interface GenerateKeywordsParams {
   businessName: string;
   city: string;
@@ -35,11 +31,18 @@ export async function generateLocalKeywords({
     }
 
     // Verifica che l'API key sia configurata
-    if (!process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY === "your_openai_api_key_here") {
+    const apiKey = process.env.OPENAI_API_KEY;
+
+    if (!apiKey || apiKey === "your_openai_api_key_here") {
       return {
         error: "OPENAI_API_KEY non configurata. Aggiungi la chiave API nel file .env.local",
       };
     }
+
+    // Inizializza il client OpenAI con la chiave
+    const openai = new OpenAI({
+      apiKey: apiKey.trim(),
+    });
 
     const categoryInfo = category ? `, Categoria: ${category}` : "";
 

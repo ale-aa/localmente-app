@@ -9,11 +9,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
-import { startScan, getScansForLocation, getScanResults } from "@/app/actions/rank-tracker";
+import { startScan, startBulkScans, getScansForLocation, getScanResults, getRankHistory } from "@/app/actions/rank-tracker";
 import { generateLocalKeywords } from "@/app/actions/ai-suggestions";
 import { getRecommendedRadius } from "@/lib/geo-utils";
 import { Loader2, TrendingUp, Target, MapPin, Calendar, Sparkles } from "lucide-react";
 import { ScanResultsView } from "./scan-results-view";
+import { RankHistoryChart } from "./rank-history-chart";
 
 interface RankTrackerTabProps {
   locationId: string;
@@ -29,6 +30,8 @@ export function RankTrackerTab({ locationId, location }: RankTrackerTabProps) {
   const [isLoadingResults, setIsLoadingResults] = useState(false);
   const [aiSuggestions, setAiSuggestions] = useState<string[]>([]);
   const [isLoadingAi, setIsLoadingAi] = useState(false);
+  const [rankHistory, setRankHistory] = useState<any[]>([]);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
 
   const [formData, setFormData] = useState({
     keyword: "",
@@ -86,11 +89,34 @@ export function RankTrackerTab({ locationId, location }: RankTrackerTabProps) {
   };
 
   const handleSelectKeyword = (keyword: string) => {
-    setFormData({ ...formData, keyword });
-    toast({
-      title: "Keyword selezionata",
-      description: `"${keyword}" è stata inserita nel campo`,
-    });
+    // Ottieni le keyword attualmente presenti (splitta per virgola)
+    const currentKeywords = formData.keyword
+      .split(",")
+      .map((k) => k.trim())
+      .filter((k) => k.length > 0);
+
+    // Controlla se la keyword è già presente
+    const isSelected = currentKeywords.includes(keyword);
+
+    let newKeywords: string[];
+    if (isSelected) {
+      // Rimuovi la keyword
+      newKeywords = currentKeywords.filter((k) => k !== keyword);
+      toast({
+        title: "Keyword rimossa",
+        description: `"${keyword}" è stata rimossa dalla selezione`,
+      });
+    } else {
+      // Aggiungi la keyword
+      newKeywords = [...currentKeywords, keyword];
+      toast({
+        title: "Keyword aggiunta",
+        description: `"${keyword}" è stata aggiunta alla selezione`,
+      });
+    }
+
+    // Ricostruisci la stringa separata da virgole
+    setFormData({ ...formData, keyword: newKeywords.join(", ") });
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -98,27 +124,77 @@ export function RankTrackerTab({ locationId, location }: RankTrackerTabProps) {
     setIsSubmitting(true);
 
     try {
-      const result = await startScan({
-        locationId,
-        keyword: formData.keyword,
-        gridSize: formData.gridSize,
-        radiusMeters: formData.radiusMeters,
-        zoom: formData.zoom,
-      });
+      // Parsing delle keyword: splitta per virgola e rimuovi spazi
+      const keywords = formData.keyword
+        .split(",")
+        .map((k) => k.trim())
+        .filter((k) => k.length > 0);
 
-      if (result.error) {
+      if (keywords.length === 0) {
         toast({
           title: "Errore",
-          description: result.error,
+          description: "Inserisci almeno una keyword",
           variant: "destructive",
         });
         return;
       }
 
-      toast({
-        title: "Scansione avviata",
-        description: "La scansione è stata avviata con successo",
-      });
+      // Se c'è una sola keyword, usa startScan
+      if (keywords.length === 1) {
+        const result = await startScan({
+          locationId,
+          keyword: keywords[0],
+          gridSize: formData.gridSize,
+          radiusMeters: formData.radiusMeters,
+          zoom: formData.zoom,
+        });
+
+        if (result.error) {
+          toast({
+            title: "Errore",
+            description: result.error,
+            variant: "destructive",
+          });
+          return;
+        }
+
+        toast({
+          title: "Scansione avviata",
+          description: "La scansione è stata avviata con successo",
+        });
+      } else {
+        // Se ci sono più keyword, usa startBulkScans
+        const result = await startBulkScans({
+          locationId,
+          keywords,
+          gridSize: formData.gridSize,
+          radiusMeters: formData.radiusMeters,
+          zoom: formData.zoom,
+        });
+
+        if (result.error) {
+          toast({
+            title: "Errore",
+            description: result.error,
+            variant: "destructive",
+          });
+          return;
+        }
+
+        // Mostra messaggio di successo con dettagli
+        if (result.failed && result.failed > 0) {
+          toast({
+            title: "Scansioni parzialmente avviate",
+            description: `${result.succeeded} su ${result.total} scansioni avviate con successo`,
+            variant: "default",
+          });
+        } else {
+          toast({
+            title: "Scansioni avviate",
+            description: `${result.succeeded} scansioni avviate con successo`,
+          });
+        }
+      }
 
       // Ricarica le scansioni
       await loadScans();
@@ -128,7 +204,7 @@ export function RankTrackerTab({ locationId, location }: RankTrackerTabProps) {
     } catch (error: any) {
       toast({
         title: "Errore",
-        description: error.message || "Errore durante l'avvio della scansione",
+        description: error.message || "Errore durante l'avvio delle scansioni",
         variant: "destructive",
       });
     } finally {
@@ -139,18 +215,26 @@ export function RankTrackerTab({ locationId, location }: RankTrackerTabProps) {
   const handleViewResults = async (scan: any) => {
     setSelectedScan(scan);
     setIsLoadingResults(true);
+    setIsLoadingHistory(true);
 
     try {
-      const { results } = await getScanResults(scan.id);
-      setScanResults(results);
+      // Carica risultati e storico in parallelo
+      const [resultsData, historyData] = await Promise.all([
+        getScanResults(scan.id),
+        getRankHistory(locationId, scan.keyword),
+      ]);
+
+      setScanResults(resultsData.results);
+      setRankHistory(historyData.history);
     } catch (error) {
       toast({
         title: "Errore",
-        description: "Errore durante il caricamento dei risultati",
+        description: "Errore durante il caricamento dei dati",
         variant: "destructive",
       });
     } finally {
       setIsLoadingResults(false);
+      setIsLoadingHistory(false);
     }
   };
 
@@ -212,7 +296,7 @@ export function RankTrackerTab({ locationId, location }: RankTrackerTabProps) {
                 </div>
                 <Input
                   id="keyword"
-                  placeholder="es: agenzia immobiliare roma"
+                  placeholder="es: pizzeria roma, ristorante centro (separa con virgola)"
                   value={formData.keyword}
                   onChange={(e) => setFormData({ ...formData, keyword: e.target.value })}
                   required
@@ -220,19 +304,32 @@ export function RankTrackerTab({ locationId, location }: RankTrackerTabProps) {
                 {aiSuggestions.length > 0 && (
                   <div className="space-y-2 pt-2">
                     <p className="text-xs text-muted-foreground">
-                      Suggerimenti AI - Clicca per usare:
+                      Suggerimenti AI - Clicca per selezionare (multipla):
                     </p>
                     <div className="flex flex-wrap gap-2">
-                      {aiSuggestions.map((keyword, index) => (
-                        <Badge
-                          key={index}
-                          variant="secondary"
-                          className="cursor-pointer hover:bg-primary hover:text-primary-foreground transition-colors"
-                          onClick={() => handleSelectKeyword(keyword)}
-                        >
-                          {keyword}
-                        </Badge>
-                      ))}
+                      {aiSuggestions.map((keyword, index) => {
+                        // Controlla se la keyword è già selezionata
+                        const selectedKeywords = formData.keyword
+                          .split(",")
+                          .map((k) => k.trim())
+                          .filter((k) => k.length > 0);
+                        const isSelected = selectedKeywords.includes(keyword);
+
+                        return (
+                          <Badge
+                            key={index}
+                            variant={isSelected ? "default" : "secondary"}
+                            className={`cursor-pointer transition-all ${
+                              isSelected
+                                ? "bg-primary text-primary-foreground ring-2 ring-primary ring-offset-2"
+                                : "hover:bg-primary hover:text-primary-foreground"
+                            }`}
+                            onClick={() => handleSelectKeyword(keyword)}
+                          >
+                            {keyword}
+                          </Badge>
+                        );
+                      })}
                     </div>
                   </div>
                 )}
@@ -372,18 +469,26 @@ export function RankTrackerTab({ locationId, location }: RankTrackerTabProps) {
         </Card>
       </div>
 
-      {/* Colonna Destra: Risultati */}
-      <div>
+      {/* Colonna Destra: Grafico + Risultati */}
+      <div className="space-y-6">
         {selectedScan ? (
-          <ScanResultsView
-            scan={selectedScan}
-            results={scanResults}
-            isLoading={isLoadingResults}
-            center={{
-              latitude: location.latitude,
-              longitude: location.longitude,
-            }}
-          />
+          <>
+            {/* Grafico Storico Andamento */}
+            {!isLoadingHistory && rankHistory.length > 0 && (
+              <RankHistoryChart data={rankHistory} keyword={selectedScan.keyword} />
+            )}
+
+            {/* Risultati Scansione */}
+            <ScanResultsView
+              scan={selectedScan}
+              results={scanResults}
+              isLoading={isLoadingResults}
+              center={{
+                latitude: location.latitude,
+                longitude: location.longitude,
+              }}
+            />
+          </>
         ) : (
           <Card>
             <CardContent className="flex flex-col items-center justify-center py-12">

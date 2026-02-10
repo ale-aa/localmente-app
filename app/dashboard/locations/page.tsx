@@ -1,8 +1,9 @@
 import Link from "next/link";
 import { DashboardHeader } from "@/components/dashboard/header";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { getLocations } from "@/app/actions/locations";
+import { LocationCard } from "@/components/locations/location-card";
 import { MapPin, Plus } from "lucide-react";
 
 export default async function LocationsPage() {
@@ -43,37 +44,7 @@ export default async function LocationsPage() {
         ) : (
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
             {locations.map((location: any) => (
-              <Link key={location.id} href={`/dashboard/locations/${location.id}`}>
-                <Card className="h-full transition-colors hover:bg-accent cursor-pointer">
-                  <CardHeader>
-                    <CardTitle className="text-lg">{location.business_name}</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-2 text-sm">
-                      <p className="text-muted-foreground">
-                        {location.address}, {location.city}
-                      </p>
-                      {location.category && (
-                        <div className="flex items-center gap-2">
-                          <span className="rounded bg-primary/10 px-2 py-1 text-xs font-medium">
-                            {location.category}
-                          </span>
-                        </div>
-                      )}
-                      {location.phone && (
-                        <p className="text-xs text-muted-foreground">
-                          📞 {location.phone}
-                        </p>
-                      )}
-                      {location.owner && (
-                        <p className="text-xs text-muted-foreground">
-                          👤 {location.owner.first_name} {location.owner.last_name}
-                        </p>
-                      )}
-                    </div>
-                  </CardContent>
-                </Card>
-              </Link>
+              <LocationCard key={location.id} location={location} />
             ))}
           </div>
         )}

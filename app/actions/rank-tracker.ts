@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { getUserAgency } from "@/lib/auth-helper";
 import { generateGrid } from "@/lib/geo-utils";
 import { batchFetchRanks } from "@/lib/dataforseo";
 import { z } from "zod";
@@ -25,13 +26,12 @@ export type ScanFormData = z.infer<typeof scanSchema>;
 export async function startScan(data: ScanFormData) {
   const supabase = await createClient();
 
-  // Ottieni l'utente corrente
-  const { data: { user } } = await supabase.auth.getUser();
-
-  if (!user) {
-    return {
-      error: "Utente non autenticato",
-    };
+  // Ottieni il contesto dell'agenzia (multi-tenancy)
+  let agencyId: string;
+  try {
+    agencyId = await getUserAgency();
+  } catch (error: any) {
+    return { error: error.message || "Errore di autenticazione" };
   }
 
   // Valida i dati
@@ -46,16 +46,17 @@ export async function startScan(data: ScanFormData) {
 
   const { locationId, keyword, gridSize, radiusMeters, zoom } = validatedData.data;
 
-  // Ottieni la location per verificare i permessi e le coordinate
+  // Ottieni la location per verificare i permessi e le coordinate (filtra per agency_id)
   const { data: location, error: locationError } = await supabase
     .from("locations")
     .select("id, latitude, longitude, agency_id, business_name, place_id")
     .eq("id", locationId)
+    .eq("agency_id", agencyId) // CHANGED: Verify agency ownership
     .single();
 
   if (locationError || !location) {
     return {
-      error: "Location non trovata",
+      error: "Location non trovata o non autorizzata",
     };
   }
 
@@ -245,6 +246,29 @@ async function performScan(
 export async function getScansForLocation(locationId: string) {
   const supabase = await createClient();
 
+  // Ottieni il contesto dell'agenzia (multi-tenancy)
+  let agencyId: string;
+  try {
+    agencyId = await getUserAgency();
+  } catch (error: any) {
+    console.error("Errore autenticazione:", error);
+    return { scans: [] };
+  }
+
+  // Verifica che la location appartenga all'agenzia (sicurezza multi-tenancy)
+  const { data: location } = await supabase
+    .from("locations")
+    .select("id")
+    .eq("id", locationId)
+    .eq("agency_id", agencyId)
+    .single();
+
+  if (!location) {
+    console.error("Location non trovata o non autorizzata");
+    return { scans: [] };
+  }
+
+  // Recupera le scansioni
   const { data: scans, error } = await supabase
     .from("rank_scans")
     .select("*")
@@ -265,14 +289,24 @@ export async function getScansForLocation(locationId: string) {
 export async function getScanResults(scanId: string) {
   const supabase = await createClient();
 
-  // Ottieni i dettagli della scansione
+  // Ottieni il contesto dell'agenzia (multi-tenancy)
+  let agencyId: string;
+  try {
+    agencyId = await getUserAgency();
+  } catch (error: any) {
+    console.error("Errore autenticazione:", error);
+    return { scan: null, results: [] };
+  }
+
+  // Ottieni i dettagli della scansione con verifica agency ownership
   const { data: scan, error: scanError } = await supabase
     .from("rank_scans")
     .select(`
       *,
-      location:locations(business_name, address, city)
+      location:locations!inner(business_name, address, city, agency_id)
     `)
     .eq("id", scanId)
+    .eq("location.agency_id", agencyId) // CHANGED: Verify agency ownership through location
     .single();
 
   if (scanError || !scan) {
@@ -300,6 +334,27 @@ export async function getScanResults(scanId: string) {
 export async function deleteScan(scanId: string) {
   const supabase = await createClient();
 
+  // Ottieni il contesto dell'agenzia (multi-tenancy)
+  let agencyId: string;
+  try {
+    agencyId = await getUserAgency();
+  } catch (error: any) {
+    return { error: error.message || "Errore di autenticazione" };
+  }
+
+  // Verifica che la scansione appartenga a una location dell'agenzia
+  const { data: scan } = await supabase
+    .from("rank_scans")
+    .select("location_id, location:locations!inner(agency_id)")
+    .eq("id", scanId)
+    .eq("location.agency_id", agencyId)
+    .single();
+
+  if (!scan) {
+    return { error: "Scansione non trovata o non autorizzata" };
+  }
+
+  // Elimina la scansione
   const { error } = await supabase
     .from("rank_scans")
     .delete()
@@ -320,6 +375,36 @@ export async function deleteScan(scanId: string) {
  */
 export async function getLocationRankStats(locationId: string) {
   const supabase = await createClient();
+
+  // Ottieni il contesto dell'agenzia (multi-tenancy)
+  let agencyId: string;
+  try {
+    agencyId = await getUserAgency();
+  } catch (error: any) {
+    return {
+      totalScans: 0,
+      averageRank: null,
+      bestRank: null,
+      latestScan: null,
+    };
+  }
+
+  // Verifica che la location appartenga all'agenzia
+  const { data: location } = await supabase
+    .from("locations")
+    .select("id")
+    .eq("id", locationId)
+    .eq("agency_id", agencyId)
+    .single();
+
+  if (!location) {
+    return {
+      totalScans: 0,
+      averageRank: null,
+      bestRank: null,
+      latestScan: null,
+    };
+  }
 
   const { data: scans } = await supabase
     .from("rank_scans")
@@ -354,5 +439,182 @@ export async function getLocationRankStats(locationId: string) {
         : null,
     bestRank: bestRanks.length > 0 ? Math.min(...bestRanks) : null,
     latestScan: scans[0],
+  };
+}
+
+/**
+ * Ottiene lo storico delle scansioni per una location e keyword specifica
+ * Usato per visualizzare il grafico dell'andamento nel tempo
+ */
+export async function getRankHistory(locationId: string, keyword?: string) {
+  const supabase = await createClient();
+
+  // Ottieni il contesto dell'agenzia (multi-tenancy)
+  let agencyId: string;
+  try {
+    agencyId = await getUserAgency();
+  } catch (error: any) {
+    console.error("Errore autenticazione:", error);
+    return { history: [] };
+  }
+
+  // Verifica che la location appartenga all'agenzia
+  const { data: location } = await supabase
+    .from("locations")
+    .select("id")
+    .eq("id", locationId)
+    .eq("agency_id", agencyId)
+    .single();
+
+  if (!location) {
+    console.error("Location non trovata o non autorizzata");
+    return { history: [] };
+  }
+
+  let query = supabase
+    .from("rank_scans")
+    .select("id, keyword, created_at, best_rank, average_rank, status")
+    .eq("location_id", locationId)
+    .eq("status", "completed")
+    .order("created_at", { ascending: true });
+
+  // Se specificata una keyword, filtra per quella
+  if (keyword) {
+    query = query.eq("keyword", keyword);
+  }
+
+  const { data: history, error } = await query;
+
+  if (error) {
+    console.error("Errore caricamento storico:", error);
+    return { history: [] };
+  }
+
+  return { history: history || [] };
+}
+
+/**
+ * Avvia scansioni multiple in blocco per più keyword
+ */
+export async function startBulkScans(data: ScanFormData & { keywords: string[] }) {
+  const supabase = await createClient();
+
+  // Ottieni il contesto dell'agenzia (multi-tenancy)
+  let agencyId: string;
+  try {
+    agencyId = await getUserAgency();
+  } catch (error: any) {
+    return { error: error.message || "Errore di autenticazione" };
+  }
+
+  const { locationId, gridSize, radiusMeters, zoom, keywords } = data;
+
+  // Valida che ci siano keyword
+  if (!keywords || keywords.length === 0) {
+    return {
+      error: "Nessuna keyword specificata",
+    };
+  }
+
+  // Ottieni la location per verificare i permessi e le coordinate (filtra per agency_id)
+  const { data: location, error: locationError } = await supabase
+    .from("locations")
+    .select("id, latitude, longitude, agency_id, business_name, place_id")
+    .eq("id", locationId)
+    .eq("agency_id", agencyId) // CHANGED: Verify agency ownership
+    .single();
+
+  if (locationError || !location) {
+    return {
+      error: "Location non trovata o non autorizzata",
+    };
+  }
+
+  // Verifica che la location abbia coordinate
+  if (!location.latitude || !location.longitude) {
+    return {
+      error: "La location non ha coordinate geografiche impostate",
+    };
+  }
+
+  // Genera la griglia di punti (uguale per tutte le scansioni)
+  const gridPoints = generateGrid(
+    location.latitude,
+    location.longitude,
+    radiusMeters,
+    gridSize
+  );
+
+  const totalPoints = gridPoints.length;
+
+  // Array per memorizzare i risultati
+  const results = [];
+  const errors = [];
+
+  // Crea una scansione per ogni keyword
+  for (const keyword of keywords) {
+    try {
+      // Crea il record della scansione
+      const { data: scan, error: scanError } = await supabase
+        .from("rank_scans")
+        .insert({
+          location_id: locationId,
+          keyword,
+          grid_size: gridSize,
+          radius_meters: radiusMeters,
+          zoom,
+          status: "pending",
+          total_points: totalPoints,
+          completed_points: 0,
+        })
+        .select()
+        .single();
+
+      if (scanError || !scan) {
+        console.error(`Errore creazione scan per "${keyword}":`, scanError);
+        errors.push({
+          keyword,
+          error: scanError?.message || "Errore sconosciuto",
+        });
+        continue;
+      }
+
+      // Avvia la scansione in background
+      try {
+        // Non aspettiamo il completamento, lanciamo in background
+        performScan(scan.id, gridPoints, keyword, zoom, location.place_id, location.business_name).catch((err) => {
+          console.error(`Errore esecuzione scan per "${keyword}":`, err);
+        });
+
+        results.push({
+          keyword,
+          scanId: scan.id,
+          success: true,
+        });
+      } catch (error: any) {
+        console.error(`Errore avvio scan per "${keyword}":`, error);
+        errors.push({
+          keyword,
+          error: error.message || "Errore durante l'avvio",
+        });
+      }
+    } catch (error: any) {
+      console.error(`Errore generale per "${keyword}":`, error);
+      errors.push({
+        keyword,
+        error: error.message || "Errore sconosciuto",
+      });
+    }
+  }
+
+  revalidatePath(`/dashboard/locations/${locationId}`);
+
+  return {
+    success: true,
+    results,
+    errors,
+    total: keywords.length,
+    succeeded: results.length,
+    failed: errors.length,
   };
 }

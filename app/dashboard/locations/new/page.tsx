@@ -12,6 +12,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { createLocation } from "@/app/actions/locations";
 import { getClients, type ClientWithLocations } from "@/app/actions/clients";
+import { getUserTypeAction } from "@/app/actions/user";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, UserPlus, ExternalLink } from "lucide-react";
 import { AddressAutocomplete } from "@/components/address-autocomplete";
@@ -22,6 +23,7 @@ export default function NewLocationPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isLoadingClients, setIsLoadingClients] = useState(true);
   const [clients, setClients] = useState<ClientWithLocations[]>([]);
+  const [userType, setUserType] = useState<"agency" | "business">("agency");
 
   // Form state (SEO-focused)
   const [formData, setFormData] = useState({
@@ -51,25 +53,32 @@ export default function NewLocationPage() {
     placeId: "",
   });
 
-  // Carica i clienti all'avvio
+  // Carica user type e clienti all'avvio
   useEffect(() => {
-    const loadClients = async () => {
+    const loadData = async () => {
       setIsLoadingClients(true);
       try {
-        const result = await getClients();
-        if (result.error) {
-          toast({
-            title: "Errore",
-            description: "Impossibile caricare la lista clienti",
-            variant: "destructive",
-          });
-        } else {
-          setClients(result.clients || []);
+        // Carica il tipo di utente
+        const type = await getUserTypeAction();
+        setUserType(type);
+
+        // Solo gli agency users vedono e caricano i clienti
+        if (type === "agency") {
+          const result = await getClients();
+          if (result.error) {
+            toast({
+              title: "Errore",
+              description: "Impossibile caricare la lista clienti",
+              variant: "destructive",
+            });
+          } else {
+            setClients(result.clients || []);
+          }
         }
       } catch (error) {
         toast({
           title: "Errore",
-          description: "Impossibile caricare la lista clienti",
+          description: "Impossibile caricare i dati",
           variant: "destructive",
         });
       } finally {
@@ -77,7 +86,7 @@ export default function NewLocationPage() {
       }
     };
 
-    loadClients();
+    loadData();
   }, [toast]);
 
   const handleAddressSelect = (details: {
@@ -113,8 +122,8 @@ export default function NewLocationPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    // Validazione cliente
-    if (!formData.clientId) {
+    // Validazione cliente (solo per agency users)
+    if (userType === "agency" && !formData.clientId) {
       toast({
         title: "Cliente obbligatorio",
         description: "Seleziona un cliente per associare questa sede",
@@ -161,20 +170,25 @@ export default function NewLocationPage() {
     <div className="flex flex-col">
       <DashboardHeader
         title="Aggiungi Nuova Sede"
-        description="Crea una nuova sede SEO per il tuo cliente"
+        description={
+          userType === "business"
+            ? "Crea una nuova sede per la tua attività"
+            : "Crea una nuova sede SEO per il tuo cliente"
+        }
       />
 
       <div className="flex-1 p-6">
         <form onSubmit={handleSubmit} className="mx-auto max-w-4xl space-y-6">
-          {/* Sezione Selezione Cliente */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Assegna al Cliente *</CardTitle>
-              <CardDescription>
-                Seleziona il cliente proprietario di questa sede
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
+          {/* Sezione Selezione Cliente (solo per agency users) */}
+          {userType === "agency" && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Assegna al Cliente *</CardTitle>
+                <CardDescription>
+                  Seleziona il cliente proprietario di questa sede
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
               {isLoadingClients ? (
                 <div className="flex items-center justify-center py-8">
                   <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -251,6 +265,7 @@ export default function NewLocationPage() {
               )}
             </CardContent>
           </Card>
+          )}
 
           {/* Sezione Ricerca Indirizzo con Google Places */}
           <Card>

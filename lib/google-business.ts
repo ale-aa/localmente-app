@@ -203,7 +203,7 @@ export async function disconnectGoogleIntegration(
 }
 
 /**
- * Esempio: Lista tutti gli account Business Profile disponibili
+ * Lista tutti gli account Business Profile disponibili
  * @param agencyId - ID dell'agenzia
  */
 export async function listBusinessAccounts(agencyId: string) {
@@ -228,5 +228,135 @@ export async function listBusinessAccounts(agencyId: string) {
   } catch (error: any) {
     console.error("[Google Business] Failed to list accounts:", error);
     throw new Error(`Failed to list business accounts: ${error.message}`);
+  }
+}
+
+export interface GoogleLocation {
+  name: string; // Resource name (es: "accounts/123/locations/456")
+  locationName: string; // Display name della sede
+  storeCode?: string; // Codice identificativo opzionale
+  address?: {
+    addressLines?: string[];
+    locality?: string; // Città
+    administrativeArea?: string; // Provincia/Stato
+    postalCode?: string;
+    regionCode?: string; // Codice paese (es: "IT")
+  };
+  phoneNumbers?: {
+    primaryPhone?: string;
+  };
+  websiteUri?: string;
+  regularHours?: any;
+  categories?: any;
+}
+
+/**
+ * Recupera tutte le locations disponibili da Google Business Profile
+ * Gestisce automaticamente la paginazione
+ * @param agencyId - ID dell'agenzia
+ * @returns Array di locations Google
+ */
+export async function listGoogleLocations(
+  agencyId: string
+): Promise<GoogleLocation[]> {
+  const authClient = await getAuthClient(agencyId);
+
+  if (!authClient) {
+    throw new Error("No Google Business integration found");
+  }
+
+  try {
+    // Prima recupera tutti gli account
+    const mybusinessaccountmanagement = google.mybusinessaccountmanagement({
+      version: "v1",
+      auth: authClient.oauth2Client,
+    });
+
+    const accountsResponse = await mybusinessaccountmanagement.accounts.list();
+    const accounts = accountsResponse.data.accounts || [];
+
+    if (accounts.length === 0) {
+      console.log("⚠️  [Google Business] No accounts found");
+      return [];
+    }
+
+    console.log(
+      `📊 [Google Business] Found ${accounts.length} account(s), fetching locations...`
+    );
+
+    // API per le locations
+    const mybusiness = google.mybusinessbusinessinformation({
+      version: "v1",
+      auth: authClient.oauth2Client,
+    });
+
+    // Recupera le locations per ogni account
+    const allLocations: GoogleLocation[] = [];
+
+    for (const account of accounts) {
+      if (!account.name) continue;
+
+      let pageToken: string | undefined = undefined;
+      let hasMore = true;
+
+      // Gestione paginazione
+      while (hasMore) {
+        try {
+          const locationsResponse = await mybusiness.accounts.locations.list({
+            parent: account.name,
+            pageSize: 100, // Max allowed
+            pageToken,
+            readMask: "name,title,storeCode,storefrontAddress,phoneNumbers,websiteUri",
+          });
+
+          const locations = locationsResponse.data.locations || [];
+
+          // Mappa i dati nel nostro formato
+          for (const loc of locations) {
+            allLocations.push({
+              name: loc.name || "",
+              locationName: loc.title || "",
+              storeCode: loc.storeCode || undefined,
+              address: loc.storefrontAddress
+                ? {
+                    addressLines: loc.storefrontAddress.addressLines || [],
+                    locality: loc.storefrontAddress.locality || undefined,
+                    administrativeArea:
+                      loc.storefrontAddress.administrativeArea || undefined,
+                    postalCode: loc.storefrontAddress.postalCode || undefined,
+                    regionCode: loc.storefrontAddress.regionCode || undefined,
+                  }
+                : undefined,
+              phoneNumbers: loc.phoneNumbers
+                ? {
+                    primaryPhone: loc.phoneNumbers.primaryPhone || undefined,
+                  }
+                : undefined,
+              websiteUri: loc.websiteUri || undefined,
+            });
+          }
+
+          // Check se ci sono altre pagine
+          pageToken = locationsResponse.data.nextPageToken || undefined;
+          hasMore = !!pageToken;
+        } catch (error: any) {
+          console.error(
+            `[Google Business] Error fetching locations for account ${account.name}:`,
+            error
+          );
+          // Continue con il prossimo account
+          break;
+        }
+      }
+    }
+
+    console.log(
+      `✅ [Google Business] Retrieved ${allLocations.length} location(s)`
+    );
+
+    return allLocations;
+  } catch (error: any) {
+    console.error("[Google Business] Failed to list locations:", error);
+    throw new Error(`Failed to list Google locations: ${error.message}`);
   }
 }

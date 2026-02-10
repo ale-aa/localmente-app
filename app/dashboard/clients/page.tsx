@@ -25,7 +25,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Users, Plus, Trash2, Loader2, Mail, Phone } from "lucide-react";
+import { Users, Plus, Trash2, Pencil, Loader2, Mail, Phone } from "lucide-react";
 import { getClients, deleteClient, type ClientWithLocations } from "@/app/actions/clients";
 import { CreateClientDialog } from "@/components/clients/create-client-dialog";
 
@@ -34,6 +34,7 @@ export default function ClientsPage() {
   const [clients, setClients] = useState<ClientWithLocations[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [selectedClient, setSelectedClient] = useState<ClientWithLocations | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -101,20 +102,32 @@ export default function ClientsPage() {
     }
   };
 
+  // Apri dialog di modifica
+  const openEditDialog = (client: ClientWithLocations) => {
+    setSelectedClient(client);
+    setEditDialogOpen(true);
+  };
+
   // Apri dialog di eliminazione
   const openDeleteDialog = (client: ClientWithLocations) => {
     setSelectedClient(client);
     setDeleteDialogOpen(true);
   };
 
-  // Callback dopo creazione cliente
+  // Callback dopo creazione/modifica cliente
   const handleClientCreated = () => {
     setCreateDialogOpen(false);
+    setEditDialogOpen(false);
+    setSelectedClient(null);
     loadClients();
   };
 
   // Helper per ottenere le iniziali
   const getInitials = (firstName: string, lastName: string) => {
+    if (!lastName) {
+      // Per le aziende (solo firstName/companyName)
+      return firstName.substring(0, 2).toUpperCase();
+    }
     return `${firstName.charAt(0)}${lastName.charAt(0)}`.toUpperCase();
   };
 
@@ -247,13 +260,22 @@ export default function ClientsPage() {
                     </TableCell>
                     <TableCell>{getStatusBadge(client.status)}</TableCell>
                     <TableCell className="text-right">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => openDeleteDialog(client)}
-                      >
-                        <Trash2 className="h-4 w-4 text-destructive" />
-                      </Button>
+                      <div className="flex items-center justify-end gap-2">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => openEditDialog(client)}
+                        >
+                          <Pencil className="h-4 w-4 text-primary" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => openDeleteDialog(client)}
+                        >
+                          <Trash2 className="h-4 w-4 text-destructive" />
+                        </Button>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -268,6 +290,14 @@ export default function ClientsPage() {
         open={createDialogOpen}
         onOpenChange={setCreateDialogOpen}
         onClientCreated={handleClientCreated}
+      />
+
+      {/* Dialog modifica cliente */}
+      <CreateClientDialog
+        open={editDialogOpen}
+        onOpenChange={setEditDialogOpen}
+        onClientCreated={handleClientCreated}
+        client={selectedClient}
       />
 
       {/* Dialog conferma eliminazione */}

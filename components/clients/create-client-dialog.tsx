@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -25,28 +25,48 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2 } from "lucide-react";
-import { createClient } from "@/app/actions/clients";
+import { createClient, updateClient, type ClientWithLocations } from "@/app/actions/clients";
 
 // Schema di validazione
-const clientFormSchema = z.object({
-  firstName: z.string().min(2, "Il nome deve contenere almeno 2 caratteri"),
-  lastName: z.string().min(2, "Il cognome deve contenere almeno 2 caratteri"),
-  email: z
-    .string()
-    .email("Email non valida")
-    .or(z.literal(""))
-    .optional(),
-  phone: z.string().optional(),
-  mobile: z.string().optional(),
-  fiscalCode: z.string().optional(),
-  vatNumber: z.string().optional(),
-  clientType: z.enum(["individual", "company"]).default("individual"),
-  address: z.string().optional(),
-  city: z.string().optional(),
-  province: z.string().optional(),
-  postalCode: z.string().optional(),
-  notes: z.string().optional(),
-});
+const clientFormSchema = z
+  .object({
+    clientType: z.enum(["individual", "company"]).default("individual"),
+    // Per privati
+    firstName: z.string().optional(),
+    lastName: z.string().optional(),
+    // Per aziende
+    companyName: z.string().optional(),
+    // Comuni
+    email: z
+      .string()
+      .email("Email non valida")
+      .or(z.literal(""))
+      .optional(),
+    phone: z.string().optional(),
+    mobile: z.string().optional(),
+    fiscalCode: z.string().optional(),
+    vatNumber: z.string().optional(),
+    address: z.string().optional(),
+    city: z.string().optional(),
+    province: z.string().optional(),
+    postalCode: z.string().optional(),
+    notes: z.string().optional(),
+  })
+  .refine(
+    (data) => {
+      if (data.clientType === "individual") {
+        return data.firstName && data.firstName.length >= 2 && data.lastName && data.lastName.length >= 2;
+      }
+      if (data.clientType === "company") {
+        return data.companyName && data.companyName.length >= 2;
+      }
+      return true;
+    },
+    {
+      message: "Compilare i campi obbligatori",
+      path: ["clientType"],
+    }
+  );
 
 type ClientFormValues = z.infer<typeof clientFormSchema>;
 
@@ -54,15 +74,20 @@ interface CreateClientDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onClientCreated: () => void;
+  client?: ClientWithLocations | null; // Se presente, modalità Edit
 }
 
 export function CreateClientDialog({
   open,
   onOpenChange,
   onClientCreated,
+  client = null, // Default null = modalità Create
 }: CreateClientDialogProps) {
   const { toast } = useToast();
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Determina se siamo in modalità Edit
+  const isEditMode = !!client;
 
   const {
     register,
@@ -77,6 +102,7 @@ export function CreateClientDialog({
       clientType: "individual",
       firstName: "",
       lastName: "",
+      companyName: "",
       email: "",
       phone: "",
       mobile: "",
@@ -92,30 +118,84 @@ export function CreateClientDialog({
 
   const clientType = watch("clientType");
 
+  // Pre-popola il form quando client cambia (modalità Edit)
+  useEffect(() => {
+    if (client) {
+      const clientTypeValue = client.client_type || "individual";
+
+      setValue("clientType", clientTypeValue);
+
+      if (clientTypeValue === "company") {
+        // Per le aziende, il nome dell'azienda è salvato in first_name
+        setValue("companyName", client.first_name || "");
+      } else {
+        // Per i privati
+        setValue("firstName", client.first_name || "");
+        setValue("lastName", client.last_name || "");
+      }
+
+      setValue("email", client.email || "");
+      setValue("phone", client.phone || "");
+      setValue("mobile", client.mobile || "");
+      setValue("fiscalCode", client.fiscal_code || "");
+      setValue("vatNumber", client.vat_number || "");
+      setValue("address", client.address || "");
+      setValue("city", client.city || "");
+      setValue("province", client.province || "");
+      setValue("postalCode", client.postal_code || "");
+      setValue("notes", client.notes || "");
+    }
+  }, [client, setValue]);
+
   const onSubmit = async (data: ClientFormValues) => {
     setIsSubmitting(true);
 
     try {
-      const result = await createClient(data);
+      let result;
 
-      if (result.error) {
-        toast({
-          title: "Errore",
-          description: result.error,
-          variant: "destructive",
-        });
+      if (isEditMode && client) {
+        // Modalità Edit: aggiorna cliente esistente
+        result = await updateClient(client.id, data);
+
+        if (result.error) {
+          toast({
+            title: "Errore",
+            description: result.error,
+            variant: "destructive",
+          });
+        } else {
+          toast({
+            title: "Cliente aggiornato",
+            description: "Le modifiche sono state salvate con successo",
+          });
+          reset();
+          onClientCreated(); // Ricarica i dati
+        }
       } else {
-        toast({
-          title: "Cliente creato",
-          description: "Il cliente è stato creato con successo",
-        });
-        reset();
-        onClientCreated();
+        // Modalità Create: crea nuovo cliente
+        result = await createClient(data);
+
+        if (result.error) {
+          toast({
+            title: "Errore",
+            description: result.error,
+            variant: "destructive",
+          });
+        } else {
+          toast({
+            title: "Cliente creato",
+            description: "Il cliente è stato creato con successo",
+          });
+          reset();
+          onClientCreated();
+        }
       }
     } catch (error) {
       toast({
         title: "Errore",
-        description: "Si è verificato un errore durante la creazione del cliente",
+        description: isEditMode
+          ? "Si è verificato un errore durante l'aggiornamento del cliente"
+          : "Si è verificato un errore durante la creazione del cliente",
         variant: "destructive",
       });
     } finally {
@@ -134,9 +214,13 @@ export function CreateClientDialog({
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Nuovo Cliente</DialogTitle>
+          <DialogTitle>
+            {isEditMode ? "Modifica Cliente" : "Nuovo Cliente"}
+          </DialogTitle>
           <DialogDescription>
-            Inserisci i dati del nuovo cliente. I campi obbligatori sono contrassegnati con *.
+            {isEditMode
+              ? "Modifica i dati del cliente. I campi obbligatori sono contrassegnati con *."
+              : "Inserisci i dati del nuovo cliente. I campi obbligatori sono contrassegnati con *."}
           </DialogDescription>
         </DialogHeader>
 
@@ -161,35 +245,51 @@ export function CreateClientDialog({
           </div>
 
           {/* Dati Anagrafici */}
-          <div className="grid gap-4 md:grid-cols-2">
-            <div className="space-y-2">
-              <Label htmlFor="firstName">Nome *</Label>
-              <Input
-                id="firstName"
-                {...register("firstName")}
-                placeholder="Mario"
-              />
-              {errors.firstName && (
-                <p className="text-sm text-destructive">
-                  {errors.firstName.message}
-                </p>
-              )}
-            </div>
+          {clientType === "individual" ? (
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="firstName">Nome *</Label>
+                <Input
+                  id="firstName"
+                  {...register("firstName")}
+                  placeholder="Mario"
+                />
+                {errors.firstName && (
+                  <p className="text-sm text-destructive">
+                    {errors.firstName.message}
+                  </p>
+                )}
+              </div>
 
+              <div className="space-y-2">
+                <Label htmlFor="lastName">Cognome *</Label>
+                <Input
+                  id="lastName"
+                  {...register("lastName")}
+                  placeholder="Rossi"
+                />
+                {errors.lastName && (
+                  <p className="text-sm text-destructive">
+                    {errors.lastName.message}
+                  </p>
+                )}
+              </div>
+            </div>
+          ) : (
             <div className="space-y-2">
-              <Label htmlFor="lastName">Cognome *</Label>
+              <Label htmlFor="companyName">Ragione Sociale *</Label>
               <Input
-                id="lastName"
-                {...register("lastName")}
-                placeholder="Rossi"
+                id="companyName"
+                {...register("companyName")}
+                placeholder="Acme S.r.l."
               />
-              {errors.lastName && (
+              {errors.companyName && (
                 <p className="text-sm text-destructive">
-                  {errors.lastName.message}
+                  {errors.companyName.message}
                 </p>
               )}
             </div>
-          </div>
+          )}
 
           {/* Contatti */}
           <div className="grid gap-4 md:grid-cols-2">
@@ -324,10 +424,10 @@ export function CreateClientDialog({
               {isSubmitting ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Creazione...
+                  {isEditMode ? "Salvataggio..." : "Creazione..."}
                 </>
               ) : (
-                "Crea Cliente"
+                isEditMode ? "Salva Modifiche" : "Crea Cliente"
               )}
             </Button>
           </DialogFooter>

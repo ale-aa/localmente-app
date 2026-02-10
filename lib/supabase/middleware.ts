@@ -49,6 +49,39 @@ export async function updateSession(request: NextRequest) {
     return NextResponse.redirect(url)
   }
 
+  // CHECK ONBOARDING: Se utente autenticato e siamo in /dashboard (ma NON in /dashboard/onboarding)
+  if (
+    user &&
+    request.nextUrl.pathname.startsWith('/dashboard') &&
+    !request.nextUrl.pathname.startsWith('/dashboard/onboarding')
+  ) {
+    try {
+      // Controlla se ha completato l'onboarding
+      const { data: profile, error } = await supabase
+        .from('profiles')
+        .select('onboarding_completed')
+        .eq('id', user.id)
+        .single()
+
+      // Se la colonna non esiste ancora (error 42703), ignora il check
+      if (error && error.code === '42703') {
+        console.log('[Middleware] Colonna onboarding_completed non esiste ancora, skip check')
+        return supabaseResponse
+      }
+
+      // Se onboarding non completato, redirect a onboarding
+      if (profile && profile.onboarding_completed === false) {
+        console.log('[Middleware] Onboarding non completato, redirect')
+        const url = request.nextUrl.clone()
+        url.pathname = '/dashboard/onboarding/user-type'
+        return NextResponse.redirect(url)
+      }
+    } catch (error) {
+      console.error('[Middleware] Errore check onboarding:', error)
+      // In caso di errore, lascia passare
+    }
+  }
+
   // IMPORTANTE: devi restituire la supabaseResponse. Se restituisci un NextResponse.next() senza
   // passarlo attraverso il processo di creazione del client Supabase, potresti cancellare
   // i cookie che il server invia al browser.
